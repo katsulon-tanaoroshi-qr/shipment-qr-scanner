@@ -207,6 +207,33 @@
     }
     .field-input-box:focus { border-color: #f87171; box-shadow: 0 0 0 3px rgba(239,68,68,0.2); }
 
+    /* ===== 原反ボタン ===== */
+    .gentan-group {
+      flex: 1;
+      display: flex;
+      gap: 8px;
+    }
+    .btn-gentan {
+      flex: 1;
+      padding: 12px 8px;
+      border: 2px solid #374151;
+      border-radius: 10px;
+      background: #111827;
+      color: #9ca3af;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s;
+      -webkit-tap-highlight-color: transparent;
+      text-align: center;
+    }
+    .btn-gentan.selected {
+      border-color: #f59e0b;
+      background: #78350f;
+      color: #fde68a;
+    }
+    .btn-gentan:active { transform: scale(0.97); }
+
     .btn {
       width: 100%;
       padding: 15px;
@@ -284,6 +311,7 @@
     }
     .badge-correction { background: #166534; color: #86efac; }
     .badge-corrected  { background: #374151; color: #9ca3af; }
+    .badge-gentan     { background: #78350f; color: #fde68a; }
 
     .history-body {
       display: flex;
@@ -410,6 +438,14 @@
       <div class="field-label-text">数量</div>
       <input class="field-input-box" id="modal-qty" type="number" min="0" inputmode="numeric" placeholder="数量を入力">
     </div>
+    <!-- 原反選択（N2フォームのみ表示） -->
+    <div class="field-row" id="gentan-row" style="display:none; align-items:flex-start; padding-top:2px;">
+      <div class="field-label-text" style="padding-top:10px;">原反？</div>
+      <div class="gentan-group">
+        <button class="btn-gentan" id="btn-gentan-yes" onclick="selectGentan('原反')">原反</button>
+        <button class="btn-gentan" id="btn-gentan-no"  onclick="selectGentan('原反ではない')">原反ではない</button>
+      </div>
+    </div>
     <button class="btn btn-primary" id="submit-btn" onclick="submitForm()">送信する</button>
     <button class="btn btn-secondary" onclick="closeModal('confirm-modal')">キャンセル</button>
   </div>
@@ -432,6 +468,14 @@
       <div class="field-label-text">訂正数量</div>
       <input class="field-input-box" id="cor-new-qty" type="number" min="0" inputmode="numeric" placeholder="正しい数量">
     </div>
+    <!-- 原反訂正（N2フォームのみ表示） -->
+    <div class="field-row" id="cor-gentan-row" style="display:none; align-items:flex-start; padding-top:2px;">
+      <div class="field-label-text" style="padding-top:10px;">原反？</div>
+      <div class="gentan-group">
+        <button class="btn-gentan" id="cor-btn-gentan-yes" onclick="selectCorGentan('原反')">原反</button>
+        <button class="btn-gentan" id="cor-btn-gentan-no"  onclick="selectCorGentan('原反ではない')">原反ではない</button>
+      </div>
+    </div>
     <button class="btn btn-green" onclick="submitCorrection()">訂正を送信</button>
     <button class="btn btn-secondary" onclick="closeModal('correction-modal')">キャンセル</button>
   </div>
@@ -447,7 +491,8 @@ const FORM_CONFIGS = {
   '1FAIpQLSfKq787IZqxuk5o11hvXotTD46oRVjSYNjAmEQ5lT8srEvdFw': {
     name: '出荷前製品ラベル (N2)',
     specField: 'entry.2120075355',
-    qtyField: 'entry.1589026180'
+    qtyField: 'entry.1589026180',
+    gentanField: 'entry.788920497'   // 原反？フィールド
   },
   '1FAIpQLScfzwhsqYCxAUYA93IcLhav_lYw4vSHjo581_T5Q-Xh2lJZUg': {
     name: '出荷完了QR',
@@ -461,14 +506,16 @@ const FORM_CONFIGS = {
   }
 };
 
-const STORAGE_KEY = 'shipment_qr_history_v2';
+const STORAGE_KEY = 'shipment_qr_history_v3';
 
 // ==============================
 //  状態管理
 // ==============================
 let codeReader = null;
 let currentScanData = null;
+let selectedGentan = '';       // 原反選択値
 let correctionTargetId = null;
+let selectedCorGentan = '';    // 訂正時の原反選択値
 let isReady = false;
 let lastCode = '';
 let lastCodeTime = 0;
@@ -487,11 +534,9 @@ async function initScanner() {
     const devices = await codeReader.listVideoInputDevices();
     if (!devices || devices.length === 0) throw new Error('カメラが見つかりません');
 
-    // 背面カメラ優先
     const back = devices.find(d => /back|rear|environment/i.test(d.label)) || devices[devices.length - 1];
-    const deviceId = back.deviceId;
 
-    await codeReader.decodeFromVideoDevice(deviceId, document.getElementById('video'), (result, err) => {
+    await codeReader.decodeFromVideoDevice(back.deviceId, document.getElementById('video'), (result, err) => {
       if (result) {
         const code = result.getText();
         const now = Date.now();
@@ -538,9 +583,11 @@ function parseQR(url) {
       formName: cfg.name,
       specNo: p.get(cfg.specField) || '',
       qty: p.get(cfg.qtyField) || '',
+      hasGentan: !!cfg.gentanField,
       formAction: `https://docs.google.com/forms/d/e/${formId}/formResponse`,
       specField: cfg.specField,
-      qtyField: cfg.qtyField
+      qtyField: cfg.qtyField,
+      gentanField: cfg.gentanField || null
     };
   } catch { return null; }
 }
@@ -553,12 +600,34 @@ function handleQR(code) {
     setTimeout(() => setStatus('スキャン待機中', true), 2500);
     return;
   }
+
   currentScanData = data;
+  selectedGentan = '';
+
   document.getElementById('modal-spec-no').textContent = data.specNo || '(データなし)';
   document.getElementById('modal-qty').value = data.qty;
+
+  // 原反ボタンの表示制御・リセット
+  const gentanRow = document.getElementById('gentan-row');
+  gentanRow.style.display = data.hasGentan ? 'flex' : 'none';
+  document.getElementById('btn-gentan-yes').className = 'btn-gentan';
+  document.getElementById('btn-gentan-no').className  = 'btn-gentan';
+
   setStatus('QRコード検出！', true);
   showModal('confirm-modal');
   setTimeout(() => document.getElementById('modal-qty').focus(), 350);
+}
+
+// 原反ボタン選択
+function selectGentan(val) {
+  selectedGentan = val;
+  document.getElementById('btn-gentan-yes').className = 'btn-gentan' + (val === '原反' ? ' selected' : '');
+  document.getElementById('btn-gentan-no').className  = 'btn-gentan' + (val === '原反ではない' ? ' selected' : '');
+}
+function selectCorGentan(val) {
+  selectedCorGentan = val;
+  document.getElementById('cor-btn-gentan-yes').className = 'btn-gentan' + (val === '原反' ? ' selected' : '');
+  document.getElementById('cor-btn-gentan-no').className  = 'btn-gentan' + (val === '原反ではない' ? ' selected' : '');
 }
 
 // ==============================
@@ -566,9 +635,14 @@ function handleQR(code) {
 // ==============================
 async function submitForm() {
   if (!currentScanData) return;
+
   const qty = document.getElementById('modal-qty').value.trim();
   if (qty === '' || isNaN(Number(qty))) {
     showToast('数量を正しく入力してください', true);
+    return;
+  }
+  if (currentScanData.hasGentan && !selectedGentan) {
+    showToast('「原反」か「原反ではない」を選択してください', true);
     return;
   }
 
@@ -576,10 +650,30 @@ async function submitForm() {
   btn.textContent = '送信中...';
   btn.disabled = true;
 
+  // ★ 履歴は送信前に必ず保存（ネットエラーでも残る）
+  const historyEntry = {
+    id: Date.now().toString(),
+    timestamp: new Date().toISOString(),
+    specNo: currentScanData.specNo,
+    qty: qty,
+    gentan: selectedGentan || null,
+    formId: currentScanData.formId,
+    formName: currentScanData.formName,
+    formAction: currentScanData.formAction,
+    specField: currentScanData.specField,
+    qtyField: currentScanData.qtyField,
+    gentanField: currentScanData.gentanField,
+    status: 'submitted'
+  };
+  addHistory(historyEntry);
+
   try {
     const body = new URLSearchParams();
     body.set(currentScanData.specField, currentScanData.specNo);
     body.set(currentScanData.qtyField, qty);
+    if (currentScanData.gentanField && selectedGentan) {
+      body.set(currentScanData.gentanField, selectedGentan);
+    }
 
     await fetch(currentScanData.formAction, {
       method: 'POST',
@@ -588,25 +682,14 @@ async function submitForm() {
       body: body.toString()
     });
 
-    addHistory({
-      id: Date.now().toString(),
-      timestamp: new Date().toISOString(),
-      specNo: currentScanData.specNo,
-      qty: qty,
-      formId: currentScanData.formId,
-      formName: currentScanData.formName,
-      formAction: currentScanData.formAction,
-      specField: currentScanData.specField,
-      qtyField: currentScanData.qtyField,
-      status: 'submitted'
-    });
-
     closeModal('confirm-modal');
     showToast('✅ 送信しました');
     setStatus('スキャン待機中', true);
     currentScanData = null;
   } catch (e) {
-    showToast('送信エラー: ' + e.message, true);
+    // 履歴は保存済み。送信失敗を通知。
+    showToast('⚠️ 送信失敗（履歴は保存済み）', true);
+    closeModal('confirm-modal');
   } finally {
     btn.textContent = '送信する';
     btn.disabled = false;
@@ -620,9 +703,20 @@ function openCorrection(id) {
   const item = getHistory().find(h => h.id === id);
   if (!item) return;
   correctionTargetId = id;
+  selectedCorGentan = '';
+
   document.getElementById('cor-spec-no').textContent = item.specNo;
   document.getElementById('cor-orig-qty').textContent = item.qty + ' 個';
   document.getElementById('cor-new-qty').value = '';
+
+  // 原反行の表示制御
+  const hasGentan = !!item.gentanField;
+  document.getElementById('cor-gentan-row').style.display = hasGentan ? 'flex' : 'none';
+  document.getElementById('cor-btn-gentan-yes').className = 'btn-gentan';
+  document.getElementById('cor-btn-gentan-no').className  = 'btn-gentan';
+  // 元の選択を初期値にセット
+  if (hasGentan && item.gentan) selectCorGentan(item.gentan);
+
   showModal('correction-modal');
   setTimeout(() => document.getElementById('cor-new-qty').focus(), 350);
 }
@@ -637,11 +731,36 @@ async function submitCorrection() {
     showToast('訂正数量を正しく入力してください', true);
     return;
   }
+  if (item.gentanField && !selectedCorGentan) {
+    showToast('「原反」か「原反ではない」を選択してください', true);
+    return;
+  }
+
+  // 履歴を先に更新
+  updateHistory(correctionTargetId, { status: 'corrected' });
+  addHistory({
+    id: Date.now().toString(),
+    timestamp: new Date().toISOString(),
+    specNo: item.specNo,
+    qty: newQty,
+    gentan: selectedCorGentan || item.gentan || null,
+    formId: item.formId,
+    formName: item.formName,
+    formAction: item.formAction,
+    specField: item.specField,
+    qtyField: item.qtyField,
+    gentanField: item.gentanField,
+    status: 'correction',
+    corrects: correctionTargetId
+  });
 
   try {
     const body = new URLSearchParams();
     body.set(item.specField, item.specNo);
     body.set(item.qtyField, newQty);
+    if (item.gentanField && selectedCorGentan) {
+      body.set(item.gentanField, selectedCorGentan);
+    }
 
     await fetch(item.formAction, {
       method: 'POST',
@@ -650,27 +769,13 @@ async function submitCorrection() {
       body: body.toString()
     });
 
-    updateHistory(correctionTargetId, { status: 'corrected' });
-
-    addHistory({
-      id: Date.now().toString(),
-      timestamp: new Date().toISOString(),
-      specNo: item.specNo,
-      qty: newQty,
-      formId: item.formId,
-      formName: item.formName,
-      formAction: item.formAction,
-      specField: item.specField,
-      qtyField: item.qtyField,
-      status: 'correction',
-      corrects: correctionTargetId
-    });
-
     closeModal('correction-modal');
     showToast('✅ 訂正を送信しました');
     renderHistory();
   } catch (e) {
-    showToast('送信エラー: ' + e.message, true);
+    showToast('⚠️ 送信失敗（履歴は保存済み）', true);
+    closeModal('correction-modal');
+    renderHistory();
   }
 }
 
@@ -714,8 +819,9 @@ function renderHistory() {
     const isCorrection = item.status === 'correction';
 
     let badge = '';
-    if (isCorrection) badge = '<span class="badge badge-correction">訂正</span>';
-    if (isCorrected)  badge = '<span class="badge badge-corrected">訂正済</span>';
+    if (isCorrection) badge += '<span class="badge badge-correction">訂正</span>';
+    if (isCorrected)  badge += '<span class="badge badge-corrected">訂正済</span>';
+    if (item.gentan)  badge += `<span class="badge badge-gentan">${escHtml(item.gentan)}</span>`;
 
     return `
       <div class="history-item ${isCorrected ? 'corrected' : ''} ${isCorrection ? 'correction' : ''}">
@@ -751,18 +857,15 @@ function closeModal(id) {
   document.getElementById(id).classList.remove('show');
   if (id === 'confirm-modal') {
     currentScanData = null;
-    // リセット: 同じQRを再スキャンできるように
+    selectedGentan = '';
     setTimeout(() => { lastCode = ''; lastCodeTime = 0; }, 500);
     setStatus('スキャン待機中', isReady);
   }
 }
 
-// モーダル外タップで閉じる
 document.querySelectorAll('.modal-overlay').forEach(overlay => {
   overlay.addEventListener('click', e => {
-    if (e.target === overlay) {
-      closeModal(overlay.id);
-    }
+    if (e.target === overlay) closeModal(overlay.id);
   });
 });
 
@@ -783,7 +886,6 @@ function showScreen(name) {
   if (name === 'history') renderHistory();
 }
 
-// Enterキーで送信
 document.getElementById('modal-qty').addEventListener('keydown', e => {
   if (e.key === 'Enter') submitForm();
 });

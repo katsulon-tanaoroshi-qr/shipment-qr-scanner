@@ -755,27 +755,37 @@ function openCorrection(id) {
 }
 
 // ユーザー辞書・オートコレクトによる非数字挿入を防ぐ
+// keydownで押したキーを記録 → inputで非数字を検出したら記録キーで復元
 function initNumericInput(el, callback) {
+  let lastKey = '';
   let lastGoodValue = '';
 
   el.addEventListener('focus', function() {
     lastGoodValue = this.value;
+    lastKey = '';
   });
 
-  // iOS 13.4+: 入力前に非数字をブロック（ユーザー辞書変換を防ぐ主対策）
-  el.addEventListener('beforeinput', function(e) {
-    if (e.data != null && /[^0-9]/.test(e.data)) {
-      e.preventDefault();
+  el.addEventListener('keydown', function(e) {
+    if (e.key >= '0' && e.key <= '9') {
+      lastKey = e.key;
+    } else if (e.key === 'Backspace') {
+      lastKey = 'Backspace';
+    } else {
+      lastKey = '';
     }
   });
 
-  // フォールバック: 非数字が混入していたら直前の正常値に巻き戻す
   el.addEventListener('input', function() {
     if (/[^0-9]/.test(this.value)) {
-      this.value = lastGoodValue;
+      // ユーザー辞書変換で非数字が混入 → keydownで記録したキーで復元
+      this.value = (lastKey && lastKey !== 'Backspace')
+        ? lastGoodValue + lastKey
+        : lastGoodValue;
+      lastGoodValue = this.value;
     } else {
       lastGoodValue = this.value;
     }
+    lastKey = '';
     if (callback) callback();
   });
 }

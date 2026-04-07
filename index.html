@@ -656,7 +656,7 @@ function selectCorGentan(val) {
 // ==============================
 //  フォーム送信
 // ==============================
-async function submitForm() {
+function submitForm() {
   if (!currentScanData) return;
 
   const qty = document.getElementById('modal-qty').value.trim();
@@ -699,33 +699,12 @@ async function submitForm() {
     id: historyEntry.id
   });
 
-  try {
-    const body = new URLSearchParams();
-    body.set(currentScanData.specField, currentScanData.specNo);
-    body.set(currentScanData.qtyField, qty);
-    if (currentScanData.gentanField && selectedGentan) {
-      body.set(currentScanData.gentanField, selectedGentan);
-    }
-
-    await fetch(currentScanData.formAction, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString()
-    });
-
-    closeModal('confirm-modal');
-    showToast('✅ 送信しました');
-    setStatus('スキャン待機中', true);
-    currentScanData = null;
-  } catch (e) {
-    // 履歴は保存済み。送信失敗を通知。
-    showToast('⚠️ 送信失敗（履歴は保存済み）', true);
-    closeModal('confirm-modal');
-  } finally {
-    btn.textContent = '送信する';
-    btn.disabled = false;
-  }
+  closeModal('confirm-modal');
+  showToast('✅ 送信しました');
+  setStatus('スキャン待機中', true);
+  currentScanData = null;
+  btn.textContent = '送信する';
+  btn.disabled = false;
 }
 
 // ==============================
@@ -803,7 +782,7 @@ function updateCorPreview() {
     newVal !== '' && !isNaN(Number(newVal)) ? `${newVal} 個` : '-';
 }
 
-async function submitCorrection() {
+function submitCorrection() {
   if (!correctionTargetId) return;
   const item = getHistory().find(h => h.id === correctionTargetId);
   if (!item) return;
@@ -865,37 +844,9 @@ async function submitCorrection() {
   sendToGAS({ action: 'submit', specNo: item.specNo, qty: cancelQty, gentan: item.gentan || '', id: cancelEntry.id });
   sendToGAS({ action: 'submit', specNo: item.specNo, qty: newQty, gentan: selectedCorGentan || item.gentan || '', id: newCorrEntry.id });
 
-  try {
-    // キャンセル送信（マイナス数量）
-    const cancelBody = new URLSearchParams();
-    cancelBody.set(item.specField, item.specNo);
-    cancelBody.set(item.qtyField, cancelQty);
-    if (item.gentanField && item.gentan) cancelBody.set(item.gentanField, item.gentan);
-    await fetch(item.formAction, {
-      method: 'POST', mode: 'no-cors',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: cancelBody.toString()
-    });
-
-    // 新規送信（正しい数量）
-    const newBody = new URLSearchParams();
-    newBody.set(item.specField, item.specNo);
-    newBody.set(item.qtyField, newQty);
-    if (item.gentanField && selectedCorGentan) newBody.set(item.gentanField, selectedCorGentan);
-    await fetch(item.formAction, {
-      method: 'POST', mode: 'no-cors',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: newBody.toString()
-    });
-
-    closeModal('correction-modal');
-    showToast('✅ 訂正を送信しました（2件）');
-    renderHistory();
-  } catch (e) {
-    showToast('⚠️ 送信失敗（履歴は保存済み）', true);
-    closeModal('correction-modal');
-    renderHistory();
-  }
+  closeModal('correction-modal');
+  showToast('✅ 訂正を送信しました（2件）');
+  renderHistory();
 }
 
 // ==============================

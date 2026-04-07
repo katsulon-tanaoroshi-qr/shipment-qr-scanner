@@ -638,11 +638,7 @@ function handleQR(code) {
 
   setStatus('QRコード検出！', true);
   showModal('confirm-modal');
-  setTimeout(() => {
-    const qtyEl = document.getElementById('modal-qty');
-    qtyEl._intendedValue = qtyEl.value;
-    qtyEl.focus();
-  }, 350);
+  setTimeout(() => document.getElementById('modal-qty').focus(), 350);
 }
 
 // 原反ボタン選択
@@ -755,43 +751,30 @@ function openCorrection(id) {
 
   showModal('correction-modal');
   updateCorPreview();
-  setTimeout(() => {
-    const corEl = document.getElementById('cor-new-qty');
-    corEl._intendedValue = '';
-    corEl.focus();
-  }, 350);
+  setTimeout(() => document.getElementById('cor-new-qty').focus(), 350);
 }
 
 // ユーザー辞書・オートコレクトによる非数字挿入を防ぐ
-// keydownで意図したキー入力を記録し、inputで非数字が混入したら巻き戻す
 function initNumericInput(el, callback) {
-  el._intendedValue = '';
+  let lastGoodValue = '';
 
   el.addEventListener('focus', function() {
-    this._intendedValue = this.value;
+    lastGoodValue = this.value;
   });
 
-  el.addEventListener('keydown', function(e) {
-    const s  = this.selectionStart ?? this._intendedValue.length;
-    const en = this.selectionEnd   ?? this._intendedValue.length;
-    if (e.key >= '0' && e.key <= '9') {
-      this._intendedValue = this._intendedValue.slice(0, s) + e.key + this._intendedValue.slice(en);
-    } else if (e.key === 'Backspace') {
-      if (s !== en) this._intendedValue = this._intendedValue.slice(0, s) + this._intendedValue.slice(en);
-      else if (s > 0) this._intendedValue = this._intendedValue.slice(0, s - 1) + this._intendedValue.slice(s);
-    } else if (e.key === 'Delete') {
-      if (s !== en) this._intendedValue = this._intendedValue.slice(0, s) + this._intendedValue.slice(en);
-      else this._intendedValue = this._intendedValue.slice(0, s) + this._intendedValue.slice(s + 1);
+  // iOS 13.4+: 入力前に非数字をブロック（ユーザー辞書変換を防ぐ主対策）
+  el.addEventListener('beforeinput', function(e) {
+    if (e.data != null && /[^0-9]/.test(e.data)) {
+      e.preventDefault();
     }
   });
 
+  // フォールバック: 非数字が混入していたら直前の正常値に巻き戻す
   el.addEventListener('input', function() {
     if (/[^0-9]/.test(this.value)) {
-      // 非数字が混入（ユーザー辞書変換）→ 意図した値に巻き戻す
-      this.value = this._intendedValue;
+      this.value = lastGoodValue;
     } else {
-      // 数字のみ（通常入力 or ペースト）→ そのまま採用
-      this._intendedValue = this.value;
+      lastGoodValue = this.value;
     }
     if (callback) callback();
   });

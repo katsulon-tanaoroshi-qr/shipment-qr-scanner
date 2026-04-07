@@ -20,7 +20,7 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   // ZXingライブラリ等の外部リソースはネットワーク優先
-  if (!e.request.url.includes('katsulon-yuga.github.io')) {
+  if (!e.request.url.includes('katsulon-tanaoroshi-qr.github.io')) {
     return;
   }
   e.respondWith(

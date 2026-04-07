@@ -777,10 +777,13 @@ function initNumericInput(el, callback) {
 
   el.addEventListener('input', function() {
     if (/[^0-9]/.test(this.value)) {
-      // ユーザー辞書変換で非数字が混入 → keydownで記録したキーで復元
-      this.value = (lastKey && lastKey !== 'Backspace')
-        ? lastGoodValue + lastKey
-        : lastGoodValue;
+      if (!lastGoodValue && lastKey && lastKey !== 'Backspace') {
+        // 最初の文字で変換が発生 → lastKeyがトリガー、iOSは別途適用しない → lastKeyで復元
+        this.value = lastKey;
+      } else {
+        // 前の入力から遅延して変換発生 → lastKeyはiOSが別途適用する → lastGoodValueに戻すだけ
+        this.value = lastGoodValue;
+      }
       lastGoodValue = this.value;
     } else {
       lastGoodValue = this.value;

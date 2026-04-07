@@ -312,6 +312,15 @@
     .badge-correction { background: #166534; color: #86efac; }
     .badge-corrected  { background: #374151; color: #9ca3af; }
     .badge-gentan     { background: #78350f; color: #fde68a; }
+    .badge-cancel     { background: #450a0a; color: #fca5a5; }
+
+    .history-item.correction-cancel {
+      opacity: 0.55;
+      border-left-color: #f87171;
+    }
+    .history-item.correction-new {
+      border-left-color: #22c55e;
+    }
 
     .history-body {
       display: flex;
@@ -466,7 +475,12 @@
     </div>
     <div class="field-row">
       <div class="field-label-text">訂正数量</div>
-      <input class="field-input-box" id="cor-new-qty" type="number" min="0" inputmode="numeric" placeholder="正しい数量">
+      <input class="field-input-box" id="cor-new-qty" type="number" min="0" inputmode="numeric" placeholder="正しい数量" oninput="updateCorPreview()">
+    </div>
+    <!-- 送信プレビュー -->
+    <div id="cor-preview" style="margin-bottom:14px; background:#0f172a; border-radius:8px; padding:10px 14px; font-size:13px; line-height:2.2; border:1px solid #1f2937;">
+      <div><span style="color:#6b7280;">キャンセル送信：</span><span id="cor-cancel-preview" style="color:#f87171; font-weight:700;">-</span></div>
+      <div><span style="color:#6b7280;">新規送信：　　</span><span id="cor-new-preview" style="color:#86efac; font-weight:700;">-</span></div>
     </div>
     <!-- 原反訂正（N2フォームのみ表示） -->
     <div class="field-row" id="cor-gentan-row" style="display:none; align-items:flex-start; padding-top:2px;">
@@ -736,7 +750,18 @@ function openCorrection(id) {
   if (hasGentan && item.gentan) selectCorGentan(item.gentan);
 
   showModal('correction-modal');
+  updateCorPreview();
   setTimeout(() => document.getElementById('cor-new-qty').focus(), 350);
+}
+
+function updateCorPreview() {
+  const origText = document.getElementById('cor-orig-qty').textContent.replace(' 個', '').trim();
+  const origNum = Number(origText);
+  const newVal = document.getElementById('cor-new-qty').value.trim();
+  document.getElementById('cor-cancel-preview').textContent =
+    origText && !isNaN(origNum) ? `${-origNum} 個` : '-';
+  document.getElementById('cor-new-preview').textContent =
+    newVal !== '' && !isNaN(Number(newVal)) ? `${newVal} 個` : '-';
 }
 
 async function submitCorrection() {
@@ -754,10 +779,32 @@ async function submitCorrection() {
     return;
   }
 
-  // 履歴を先に更新
+  const cancelQty = String(-Number(item.qty));
+  const now = Date.now();
+
+  // 履歴を先に更新（元エントリを訂正済みに）
   updateHistory(correctionTargetId, { status: 'corrected' });
-  const correctionEntry = {
-    id: Date.now().toString(),
+
+  // キャンセルエントリ（マイナス）
+  const cancelEntry = {
+    id: String(now),
+    timestamp: new Date().toISOString(),
+    specNo: item.specNo,
+    qty: cancelQty,
+    gentan: item.gentan || null,
+    formId: item.formId,
+    formName: item.formName,
+    formAction: item.formAction,
+    specField: item.specField,
+    qtyField: item.qtyField,
+    gentanField: item.gentanField,
+    status: 'correction_cancel',
+    corrects: correctionTargetId
+  };
+
+  // 新規エントリ（プラス）
+  const newCorrEntry = {
+    id: String(now + 1),
     timestamp: new Date().toISOString(),
     specNo: item.specNo,
     qty: newQty,
@@ -768,36 +815,42 @@ async function submitCorrection() {
     specField: item.specField,
     qtyField: item.qtyField,
     gentanField: item.gentanField,
-    status: 'correction',
+    status: 'correction_new',
     corrects: correctionTargetId
   };
-  addHistory(correctionEntry);
 
-  // スプレッドシートへ訂正書き込み（Apps Script）
-  sendToGAS({
-    action: 'correct',
-    id: correctionTargetId,
-    qty: newQty,
-    gentan: selectedCorGentan || item.gentan || ''
-  });
+  addHistory(cancelEntry);
+  addHistory(newCorrEntry);
+
+  // スプレッドシートへ2件送信（Apps Script）
+  sendToGAS({ action: 'submit', specNo: item.specNo, qty: cancelQty, gentan: item.gentan || '', id: cancelEntry.id });
+  sendToGAS({ action: 'submit', specNo: item.specNo, qty: newQty, gentan: selectedCorGentan || item.gentan || '', id: newCorrEntry.id });
 
   try {
-    const body = new URLSearchParams();
-    body.set(item.specField, item.specNo);
-    body.set(item.qtyField, newQty);
-    if (item.gentanField && selectedCorGentan) {
-      body.set(item.gentanField, selectedCorGentan);
-    }
-
+    // キャンセル送信（マイナス数量）
+    const cancelBody = new URLSearchParams();
+    cancelBody.set(item.specField, item.specNo);
+    cancelBody.set(item.qtyField, cancelQty);
+    if (item.gentanField && item.gentan) cancelBody.set(item.gentanField, item.gentan);
     await fetch(item.formAction, {
-      method: 'POST',
-      mode: 'no-cors',
+      method: 'POST', mode: 'no-cors',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString()
+      body: cancelBody.toString()
+    });
+
+    // 新規送信（正しい数量）
+    const newBody = new URLSearchParams();
+    newBody.set(item.specField, item.specNo);
+    newBody.set(item.qtyField, newQty);
+    if (item.gentanField && selectedCorGentan) newBody.set(item.gentanField, selectedCorGentan);
+    await fetch(item.formAction, {
+      method: 'POST', mode: 'no-cors',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: newBody.toString()
     });
 
     closeModal('correction-modal');
-    showToast('✅ 訂正を送信しました');
+    showToast('✅ 訂正を送信しました（2件）');
     renderHistory();
   } catch (e) {
     showToast('⚠️ 送信失敗（履歴は保存済み）', true);
@@ -842,26 +895,36 @@ function renderHistory() {
   el.innerHTML = history.map(item => {
     const dt = new Date(item.timestamp);
     const dateStr = dt.toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' });
-    const isCorrected = item.status === 'corrected';
-    const isCorrection = item.status === 'correction';
+    const isCorrected    = item.status === 'corrected';
+    const isCancel       = item.status === 'correction_cancel';
+    const isCorrectionNew = item.status === 'correction_new';
+
+    let extraClass = '';
+    if (isCorrected)     extraClass = 'corrected';
+    if (isCancel)        extraClass = 'correction-cancel';
+    if (isCorrectionNew) extraClass = 'correction-new';
 
     let badge = '';
-    if (isCorrection) badge += '<span class="badge badge-correction">訂正</span>';
-    if (isCorrected)  badge += '<span class="badge badge-corrected">訂正済</span>';
-    if (item.gentan)  badge += `<span class="badge badge-gentan">${escHtml(item.gentan)}</span>`;
+    if (isCancel)        badge += '<span class="badge badge-cancel">取消</span>';
+    if (isCorrectionNew) badge += '<span class="badge badge-correction">訂正</span>';
+    if (isCorrected)     badge += '<span class="badge badge-corrected">訂正済</span>';
+    if (item.gentan)     badge += `<span class="badge badge-gentan">${escHtml(item.gentan)}</span>`;
+
+    // 訂正ボタン：取消・訂正済みは表示しない
+    const showCorrectBtn = !isCorrected && !isCancel;
 
     return `
-      <div class="history-item ${isCorrected ? 'corrected' : ''} ${isCorrection ? 'correction' : ''}">
+      <div class="history-item ${extraClass}">
         <div class="history-item-header">
           <span class="history-time">${dateStr}</span>
           ${badge}
         </div>
         <div class="history-body">
           <div class="h-spec">${escHtml(item.specNo) || '(不明)'}</div>
-          <div class="h-qty">${escHtml(item.qty)}</div>
+          <div class="h-qty" style="${isCancel ? 'color:#f87171;' : ''}">${escHtml(item.qty)}</div>
           <div class="h-qty-unit">個</div>
         </div>
-        ${!isCorrected ? `
+        ${showCorrectBtn ? `
         <div class="history-footer">
           <button class="btn-correct" onclick="openCorrection('${item.id}')">数量を訂正する</button>
         </div>` : ''}
